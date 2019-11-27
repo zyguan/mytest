@@ -33,6 +33,7 @@ type MyCase interface {
 }
 
 type CheckErrors struct {
+	Info        TaskInfo
 	DiffErrs    []error
 	CollectErrs []error
 }
@@ -61,7 +62,7 @@ func Run(mc MyCase, rc ResultStore) error {
 	if err := mc.Test(rc); err != nil {
 		return fmt.Errorf("run test: %s", err.Error())
 	}
-	errs := CheckErrors{}
+	errs := CheckErrors{Info: info}
 	for key, checker := range mc.Checkers() {
 		rs, err := rc.Read(key)
 		if err != nil {
@@ -83,6 +84,9 @@ func Run(mc MyCase, rc ResultStore) error {
 		if err = rc.Mark(key, state); err != nil {
 			errs.CollectErrs = append(errs.CollectErrs, err)
 		}
+	}
+	if len(errs.DiffErrs) > 0 || len(errs.CollectErrs) > 0 {
+		return &errs
 	}
 	return nil
 }
