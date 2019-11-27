@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"io"
 	"sort"
+	"strconv"
 
 	"github.com/olekukonko/tablewriter"
 )
@@ -27,13 +28,32 @@ type ColumnDef struct {
 	HasPrecisionScale bool
 }
 
+type ExecResult struct {
+	RowsAffected int64
+	LastInsertId int64
+
+	HasRowsAffected bool
+	HasLastInsertId bool
+}
+
 type ResultSet struct {
 	cols []ColumnDef
 	data [][][]byte
+	exec ExecResult
 }
 
 func New(schema []ColumnDef) *ResultSet {
 	return &ResultSet{cols: schema}
+}
+
+func NewFromResult(res sql.Result) *ResultSet {
+	var err error
+	rs := &ResultSet{exec: ExecResult{}}
+	rs.exec.RowsAffected, err = res.RowsAffected()
+	rs.exec.HasRowsAffected = err == nil
+	rs.exec.LastInsertId, err = res.LastInsertId()
+	rs.exec.HasLastInsertId = err == nil
+	return rs
 }
 
 func ReadFromRows(rows *sql.Rows) (*ResultSet, error) {
@@ -57,6 +77,10 @@ func ReadFromRows(rows *sql.Rows) (*ResultSet, error) {
 	}
 	return rs, rows.Err()
 }
+
+func (rs *ResultSet) IsExecResult() bool { return len(rs.cols) == 0 }
+
+func (rs *ResultSet) ExecResult() ExecResult { return rs.exec }
 
 func (rs *ResultSet) NRows() int { return len(rs.data) }
 
@@ -92,6 +116,9 @@ func (rs *ResultSet) RawValue(i int, j int) ([]byte, bool) {
 }
 
 func (rs *ResultSet) AllocateRow() []interface{} {
+	if rs.IsExecResult() {
+		return nil
+	}
 	row := make([][]byte, len(rs.cols))
 	rs.data = append(rs.data, row)
 	xs := make([]interface{}, len(row))
@@ -102,6 +129,9 @@ func (rs *ResultSet) AllocateRow() []interface{} {
 }
 
 func (rs *ResultSet) DataDigest(optFilters ...func(i int, j int, raw []byte) bool) string {
+	if rs.IsExecResult() {
+		return ""
+	}
 	h := sha1.New()
 	for i, row := range rs.data {
 	cellLoop:
@@ -126,6 +156,19 @@ func (rs *ResultSet) DataDigest(optFilters ...func(i int, j int, raw []byte) boo
 
 func (rs *ResultSet) PrettyPrint(out io.Writer) {
 	table := tablewriter.NewWriter(out)
+	if rs.IsExecResult() {
+		table.SetHeader([]string{"RowsAffected", "LastInsertId"})
+		row := []string{"NULL", "NULL"}
+		if rs.exec.HasRowsAffected {
+			row[0] = strconv.FormatInt(rs.exec.RowsAffected, 10)
+		}
+		if rs.exec.HasLastInsertId {
+			row[1] = strconv.FormatInt(rs.exec.LastInsertId, 10)
+		}
+		table.Append(row)
+		table.Render()
+		return
+	}
 	hdr := make([]string, len(rs.cols))
 	for i, c := range rs.cols {
 		hdr[i] = c.Name
@@ -157,10 +200,12 @@ func (rs *ResultSet) EncodeTo(w io.Writer) error {
 	zw := gzip.NewWriter(w)
 	defer zw.Close()
 	enc := gob.NewEncoder(zw)
-	if err := enc.Encode(rs.cols); err != nil {
-		return err
-	}
-	return enc.Encode(rs.data)
+	tmp := struct {
+		Cols []ColumnDef
+		Data [][][]byte
+		Exec ExecResult
+	}{rs.cols, rs.data, rs.exec}
+	return enc.Encode(tmp)
 }
 
 func (rs *ResultSet) Decode(raw []byte) error {
@@ -173,14 +218,14 @@ func (rs *ResultSet) DecodeFrom(r io.Reader) error {
 		return err
 	}
 	dec := gob.NewDecoder(zr)
-	var cols []ColumnDef
-	if err := dec.Decode(&cols); err != nil {
+	var tmp struct {
+		Cols []ColumnDef
+		Data [][][]byte
+		Exec ExecResult
+	}
+	if err := dec.Decode(&tmp); err != nil {
 		return err
 	}
-	var data [][][]byte
-	if err := dec.Decode(&data); err != nil {
-		return err
-	}
-	rs.cols, rs.data = cols, data
+	rs.cols, rs.data, rs.exec = tmp.Cols, tmp.Data, tmp.Exec
 	return nil
 }

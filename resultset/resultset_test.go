@@ -15,18 +15,18 @@ var opts struct {
 }
 
 var rss = []ResultSet{
-	{nil, nil},
-	{[]ColumnDef{}, nil},
+	{nil, nil, ExecResult{0, 0, false, false}},
+	{[]ColumnDef{}, nil, ExecResult{1, 0, true, false}},
 	{[]ColumnDef{
 		{Name: "foo", Type: "TEXT"},
-	}, nil},
+	}, nil, ExecResult{0, 1, false, true}},
 	{[]ColumnDef{
 		{Name: "foo", Type: "TEXT"},
 	}, [][][]byte{
 		{{0x1}},
 		{nil},
 		{{}},
-	}},
+	}, ExecResult{1, 1, true, true}},
 }
 
 func init() {

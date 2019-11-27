@@ -119,6 +119,15 @@ func (c Checker) diffCols(cols1 []ColumnDef, cols2 []ColumnDef) string {
 }
 
 func (c Checker) Diff(rs1 *ResultSet, rs2 *ResultSet) error {
+	if rs1.IsExecResult() != rs2.IsExecResult() {
+		return fmt.Errorf("result type mismatch: is exec result: %v <> %v", rs1.IsExecResult(), rs2.IsExecResult())
+	}
+	if rs1.IsExecResult() {
+		if rs1.exec != rs2.exec {
+			return fmt.Errorf("exec result mismatch: %v <> %v", rs1.exec, rs2.exec)
+		}
+		return nil
+	}
 	sm := ShapeMismatch{
 		NRows1:  rs1.NRows(),
 		NRows2:  rs2.NRows(),
