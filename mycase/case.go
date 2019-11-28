@@ -72,6 +72,7 @@ type RunErrors struct {
 	Info      TaskInfo
 	Stage     string
 	ExecErr   error
+	DiffKeys  []string
 	DiffErrs  []error
 	StoreErrs []error
 }
@@ -82,6 +83,20 @@ func (e *RunErrors) Error() string {
 		return prefix + e.ExecErr.Error()
 	}
 	return prefix + fmt.Sprintf("there are %d diff errors and %d store errors", len(e.DiffErrs), len(e.StoreErrs))
+}
+
+func (e *RunErrors) Errors() []error {
+	var errs []error
+	if e.ExecErr != nil {
+		errs = append(errs, e.ExecErr)
+	}
+	for _, err := range e.DiffErrs {
+		errs = append(errs, err)
+	}
+	for _, err := range e.StoreErrs {
+		errs = append(errs, err)
+	}
+	return errs
 }
 
 func (e *RunErrors) NoError() bool {
@@ -135,6 +150,7 @@ func Run(mc MyCase, rc ResultStore, opts ...RunOptions) error {
 			if err := checker.Diff(r0.ResultSet, rs[i].ResultSet); err != nil {
 				state = StateFail
 				errs.DiffErrs = append(errs.DiffErrs, err)
+				errs.DiffKeys = append(errs.DiffKeys, key)
 				break
 			}
 		}

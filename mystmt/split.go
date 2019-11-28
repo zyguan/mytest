@@ -41,7 +41,7 @@ func (it *iterator) Scan() bool {
 		it.head = it.lexer.NextToken()
 		tt := it.head.GetTokenType()
 		if tt == antlr.TokenEOF {
-			if it.buf.Len() > 0 {
+			if it.buf.Len() > 0 && len(strings.TrimSpace(it.buf.String())) > 0 {
 				return true
 			}
 			return false
