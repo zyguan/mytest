@@ -46,14 +46,16 @@ func TestSqliteResultStore_Setup(t *testing.T) {
 	assert.Equal(t, task.Time, time.Unix(ts, 0))
 }
 
-func TestSQLiteResultStore_ReadWrite(t *testing.T) {
+func TestSQLiteResultStore_ReadWriteResults(t *testing.T) {
 	store, err := NewSQLiteResultStore(":memory:")
 	assert.NoError(t, err)
 	defer store.Close()
 
-	// #1 read-write before setup
+	// #1 read-write-keys before setup
 	assert.Error(t, store.Write(QueryResult{}))
 	_, err = store.Read("key")
+	assert.Error(t, err)
+	_, err = store.Keys()
 	assert.Error(t, err)
 
 	task := TaskInfo{ID: "foo", Name: "bar", Meta: json.RawMessage("42"), Time: time.Unix(1573430400, 0)}
@@ -78,6 +80,9 @@ func TestSQLiteResultStore_ReadWrite(t *testing.T) {
 	qrs, err := store.Read(qr.Key)
 	assert.NoError(t, err)
 	assert.Empty(t, qrs)
+	ks, err := store.Keys()
+	assert.NoError(t, err)
+	assert.Empty(t, ks)
 
 	// #3 write result
 	assert.NoError(t, store.Write(qr))
@@ -88,12 +93,15 @@ func TestSQLiteResultStore_ReadWrite(t *testing.T) {
 	assert.Equal(t, 1, len(qrs))
 	assert.Equal(t, qr, qrs[0])
 	assert.Equal(t, qr.ResultSet.DataDigest(), qrs[0].ResultSet.DataDigest())
+	ks, err = store.Keys()
+	assert.NoError(t, err)
+	assert.Equal(t, []string{qr.Key}, ks)
 
 	qrs, err = store.Read(qr.Key + "_not_found")
 	assert.NoError(t, err)
-	assert.Equal(t, 0, len(qrs))
+	assert.Empty(t, qrs)
 
-	// #5 write another result then read
+	// #5 write some other results then read
 	assert.NoError(t, store.Write(qr))
 
 	qrs, err = store.Read(qr.Key)
@@ -101,6 +109,23 @@ func TestSQLiteResultStore_ReadWrite(t *testing.T) {
 	assert.Equal(t, 2, len(qrs))
 	assert.Equal(t, qr, qrs[0])
 	assert.Equal(t, qr, qrs[1])
+	ks, err = store.Keys()
+	assert.NoError(t, err)
+	assert.Equal(t, []string{qr.Key}, ks)
+
+	qr2 := qr
+	qr2.Key = "k2"
+	assert.NoError(t, store.Write(qr2))
+
+	qrs, err = store.Read(qr.Key)
+	assert.NoError(t, err)
+	assert.Equal(t, 2, len(qrs))
+	qrs, err = store.Read(qr2.Key)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, len(qrs))
+	ks, err = store.Keys()
+	assert.NoError(t, err)
+	assert.Equal(t, []string{qr.Key, qr2.Key}, ks)
 
 	// #6 switch task
 	task.ID = "bar"
@@ -108,24 +133,26 @@ func TestSQLiteResultStore_ReadWrite(t *testing.T) {
 	qrs, err = store.Read(qr.Key)
 	assert.NoError(t, err)
 	assert.Empty(t, qrs)
-
+	ks, err = store.Keys()
+	assert.NoError(t, err)
+	assert.Empty(t, ks)
 }
 
-func TestSQLiteResultStore_MarkFindKeys(t *testing.T) {
+func TestSQLiteResultStore_MarkListKeys(t *testing.T) {
 	store, err := NewSQLiteResultStore(":memory:")
 	assert.NoError(t, err)
 	defer store.Close()
 
-	// #1 mark-find before setup
+	// #1 mark-list before setup
 	assert.Error(t, store.Mark("foo", "bar"))
-	_, err = store.FindKeys("foo")
+	_, err = store.KeysByState("foo")
 	assert.Error(t, err)
 
 	task := TaskInfo{ID: "foo", Name: "bar", Meta: json.RawMessage("42"), Time: time.Unix(1573430400, 0)}
 	assert.NoError(t, store.Setup(task))
 
-	// #2 find empty keys
-	ks, err := store.FindKeys("foo")
+	// #2 list empty keys
+	ks, err := store.KeysByState("foo")
 	assert.NoError(t, err)
 	assert.Empty(t, ks)
 
@@ -137,24 +164,24 @@ func TestSQLiteResultStore_MarkFindKeys(t *testing.T) {
 	assert.NoError(t, store.db.QueryRow("select count(1) from key_state where task_id = ?", store.CurrentTask.ID).Scan(&cnt))
 	assert.Equal(t, 3, cnt)
 
-	// #4 find keys
-	ks, err = store.FindKeys(StateOK)
+	// #4 list keys
+	ks, err = store.KeysByState(StateOK)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, len(ks))
 	assert.Contains(t, ks, "foo")
 	assert.Contains(t, ks, "bar")
-	ks, err = store.FindKeys(StateFail)
+	ks, err = store.KeysByState(StateFail)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(ks))
 	assert.Equal(t, "baz", ks[0])
 
 	// #5 update state
 	assert.NoError(t, store.Mark("bar", StateFail))
-	ks, err = store.FindKeys(StateOK)
+	ks, err = store.KeysByState(StateOK)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(ks))
 	assert.Contains(t, ks, "foo")
-	ks, err = store.FindKeys(StateFail)
+	ks, err = store.KeysByState(StateFail)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, len(ks))
 	assert.Contains(t, ks, "bar")
@@ -163,16 +190,16 @@ func TestSQLiteResultStore_MarkFindKeys(t *testing.T) {
 	// #6 switch task
 	task.ID = "bar"
 	assert.NoError(t, store.Setup(task))
-	ks, err = store.FindKeys(StateOK)
+	ks, err = store.KeysByState(StateOK)
 	assert.NoError(t, err)
 	assert.Empty(t, ks)
-	ks, err = store.FindKeys(StateFail)
+	ks, err = store.KeysByState(StateFail)
 	assert.NoError(t, err)
 	assert.Empty(t, ks)
 
 	// #7 mark again
 	assert.NoError(t, store.Mark("foo", StateOK))
-	ks, err = store.FindKeys(StateOK)
+	ks, err = store.KeysByState(StateOK)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(ks))
 	assert.Contains(t, ks, "foo")
