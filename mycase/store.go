@@ -126,7 +126,7 @@ func (s *SQLiteResultStore) FindKeys(state string) ([]string, error) {
 	if len(s.CurrentTask.ID) == 0 {
 		return nil, errors.New("task has not been setup")
 	}
-	rows, err := s.db.Query("select distinct `key` from `group_state` where `task_id` = ? and `state` = ?", s.CurrentTask.ID, state)
+	rows, err := s.db.Query("select distinct `key` from `key_state` where `task_id` = ? and `state` = ?", s.CurrentTask.ID, state)
 	//rs, err := resultset.ReadFromRows(rows)
 	//rs.PrettyPrint(os.Stdout)
 	if err != nil {
@@ -148,7 +148,7 @@ func (s *SQLiteResultStore) Mark(key string, state string) error {
 	if len(s.CurrentTask.ID) == 0 {
 		return errors.New("task has not been setup")
 	}
-	_, err := s.db.Exec("insert into `group_state`(`task_id`, `key`, `state`) values (?, ?, ?) on conflict(`task_id`, `key`) do update set `state` = ?", s.CurrentTask.ID, key, state, state)
+	_, err := s.db.Exec("insert into `key_state`(`task_id`, `key`, `state`) values (?, ?, ?) on conflict(`task_id`, `key`) do update set `state` = ?", s.CurrentTask.ID, key, state, state)
 	return err
 }
 
@@ -158,7 +158,7 @@ func (s *SQLiteResultStore) bootstrap() error {
 	for _, stmt := range []string{
 		"create table if not exists `task`(`id` text, `name` text, `meta` text, `time` int, primary key (id))",
 		"create table if not exists `result`(`id` integer primary key autoincrement, `task_id` text, `key` text, `sql` text, `version` text, `data_digest` text, `result` blob, `time` int, `duration` real)",
-		"create table if not exists `group_state`(`task_id` text, `key` text, `state` text, primary key (`task_id`, `key`))",
+		"create table if not exists `key_state`(`task_id` text, `key` text, `state` text, primary key (`task_id`, `key`))",
 		"create index if not exists `idx_result__task_id__key` on `result`(`task_id`, `key`)",
 	} {
 		if _, err := s.db.Exec(stmt); err != nil {

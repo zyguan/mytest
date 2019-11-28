@@ -134,7 +134,7 @@ func TestSQLiteResultStore_MarkFindKeys(t *testing.T) {
 	assert.NoError(t, store.Mark("bar", StateOK))
 	assert.NoError(t, store.Mark("baz", StateFail))
 	var cnt int
-	assert.NoError(t, store.db.QueryRow("select count(1) from group_state where task_id = ?", store.CurrentTask.ID).Scan(&cnt))
+	assert.NoError(t, store.db.QueryRow("select count(1) from key_state where task_id = ?", store.CurrentTask.ID).Scan(&cnt))
 	assert.Equal(t, 3, cnt)
 
 	// #4 find keys
