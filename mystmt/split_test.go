@@ -53,6 +53,7 @@ func TestSplitText(t *testing.T) {
 		{";;", nil},
 		{"select 1", toStmts("select 1")},
 		{"select 1;", toStmts("select 1;")},
+		{"select 1;\n\n# xxx\n ", toStmts("select 1;")},
 		{";;select 1;;", toStmts("select 1;")},
 		{"select 'foo;';", toStmts("select 'foo;';")},
 		{"--select 'foo;';", nil},

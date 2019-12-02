@@ -10,14 +10,19 @@ import (
 	"github.com/zyguan/mytest/resultset"
 )
 
+var (
+	ErrNotSetup = errors.New("task has not been setup")
+)
+
 type ResultStore interface {
 	Setup(info TaskInfo) error
 
 	Write(res QueryResult) error
 	Read(key string) ([]QueryResult, error)
+	Keys() ([]string, error)
 
-	FindKeys(state string) ([]string, error)
 	Mark(key string, state string) error
+	KeysByState(state string) ([]string, error)
 }
 
 var (
@@ -75,7 +80,7 @@ func (s *SQLiteResultStore) Setup(info TaskInfo) error {
 
 func (s *SQLiteResultStore) Write(res QueryResult) error {
 	if len(s.CurrentTask.ID) == 0 {
-		return errors.New("task has not been setup")
+		return ErrNotSetup
 	}
 	args := make([]interface{}, 8)
 	var err error
@@ -96,9 +101,9 @@ func (s *SQLiteResultStore) Write(res QueryResult) error {
 
 func (s *SQLiteResultStore) Read(key string) ([]QueryResult, error) {
 	if len(s.CurrentTask.ID) == 0 {
-		return nil, errors.New("task has not been setup")
+		return nil, ErrNotSetup
 	}
-	rows, err := s.db.Query("select `sql`, `version`, `result`, `time`, `duration` from `result` where `task_id` = ? and `key` = ?", s.CurrentTask.ID, key)
+	rows, err := s.db.Query("select `sql`, `version`, `result`, `time`, `duration` from `result` where `task_id` = ? and `key` = ? order by `version`", s.CurrentTask.ID, key)
 	if err != nil {
 		return nil, errors.New("query result: " + err.Error())
 	}
@@ -122,13 +127,11 @@ func (s *SQLiteResultStore) Read(key string) ([]QueryResult, error) {
 	return qrs, rows.Err()
 }
 
-func (s *SQLiteResultStore) FindKeys(state string) ([]string, error) {
+func (s *SQLiteResultStore) Keys() ([]string, error) {
 	if len(s.CurrentTask.ID) == 0 {
-		return nil, errors.New("task has not been setup")
+		return nil, ErrNotSetup
 	}
-	rows, err := s.db.Query("select distinct `key` from `group_state` where `task_id` = ? and `state` = ?", s.CurrentTask.ID, state)
-	//rs, err := resultset.ReadFromRows(rows)
-	//rs.PrettyPrint(os.Stdout)
+	rows, err := s.db.Query("select distinct `key` from `result` where `task_id` = ? order by `key`", s.CurrentTask.ID)
 	if err != nil {
 		return nil, errors.New("query keys: " + err.Error())
 	}
@@ -137,7 +140,7 @@ func (s *SQLiteResultStore) FindKeys(state string) ([]string, error) {
 	for rows.Next() {
 		var key string
 		if err = rows.Scan(&key); err != nil {
-			return nil, errors.New("scan state row: " + err.Error())
+			return nil, errors.New("scan result row: " + err.Error())
 		}
 		keys = append(keys, key)
 	}
@@ -146,10 +149,30 @@ func (s *SQLiteResultStore) FindKeys(state string) ([]string, error) {
 
 func (s *SQLiteResultStore) Mark(key string, state string) error {
 	if len(s.CurrentTask.ID) == 0 {
-		return errors.New("task has not been setup")
+		return ErrNotSetup
 	}
-	_, err := s.db.Exec("insert into `group_state`(`task_id`, `key`, `state`) values (?, ?, ?) on conflict(`task_id`, `key`) do update set `state` = ?", s.CurrentTask.ID, key, state, state)
+	_, err := s.db.Exec("insert into `key_state`(`task_id`, `key`, `state`) values (?, ?, ?) on conflict(`task_id`, `key`) do update set `state` = ?", s.CurrentTask.ID, key, state, state)
 	return err
+}
+
+func (s *SQLiteResultStore) KeysByState(state string) ([]string, error) {
+	if len(s.CurrentTask.ID) == 0 {
+		return nil, ErrNotSetup
+	}
+	rows, err := s.db.Query("select distinct `key` from `key_state` where `task_id` = ? and `state` = ? order by `key`", s.CurrentTask.ID, state)
+	if err != nil {
+		return nil, errors.New("query keys: " + err.Error())
+	}
+	defer rows.Close()
+	var keys []string
+	for rows.Next() {
+		var key string
+		if err = rows.Scan(&key); err != nil {
+			return nil, errors.New("scan key_state row: " + err.Error())
+		}
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
 }
 
 func (s *SQLiteResultStore) Close() error { return s.db.Close() }
@@ -158,7 +181,7 @@ func (s *SQLiteResultStore) bootstrap() error {
 	for _, stmt := range []string{
 		"create table if not exists `task`(`id` text, `name` text, `meta` text, `time` int, primary key (id))",
 		"create table if not exists `result`(`id` integer primary key autoincrement, `task_id` text, `key` text, `sql` text, `version` text, `data_digest` text, `result` blob, `time` int, `duration` real)",
-		"create table if not exists `group_state`(`task_id` text, `key` text, `state` text, primary key (`task_id`, `key`))",
+		"create table if not exists `key_state`(`task_id` text, `key` text, `state` text, primary key (`task_id`, `key`))",
 		"create index if not exists `idx_result__task_id__key` on `result`(`task_id`, `key`)",
 	} {
 		if _, err := s.db.Exec(stmt); err != nil {
