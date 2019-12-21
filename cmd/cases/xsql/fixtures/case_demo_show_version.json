@@ -1,0 +1,10 @@
+{
+  "name": "demo.show_version",
+  "stages": {
+    "setup": ["sql/drop_common_test_tables.sql"],
+    "test": ["sql/select_version.sql"]
+  },
+  "checkers": {
+    "version": {}
+  }
+}

@@ -1,0 +1,2 @@
+--query version
+select version()
