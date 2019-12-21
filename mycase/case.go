@@ -28,7 +28,7 @@ type QueryResult struct {
 type MyCase interface {
 	NewTask() TaskInfo
 	Checkers() map[string]resultset.Checker
-	Setup() error
+	Setup(args json.RawMessage) error
 	Teardown() error
 	Test(rc ResultStore) error
 }
@@ -63,7 +63,31 @@ func CheckerMatchRegexp(pattern string, checker resultset.Checker) GlobalChecker
 	return &wrappedChecker{filter: p.MatchString, internal: checker}
 }
 
+type RunOption func(opts RunOptions) RunOptions
+
+func WithArgs(args json.RawMessage) RunOption {
+	return func(opts RunOptions) RunOptions {
+		opts.CaseArgs = args
+		return opts
+	}
+}
+
+func WithGlobalCheckMode(mode GlobalCheckMode) RunOption {
+	return func(opts RunOptions) RunOptions {
+		opts.GlobalCheckMode = mode
+		return opts
+	}
+}
+
+func WithGlobalCheckers(checkers ...GlobalChecker) RunOption {
+	return func(opts RunOptions) RunOptions {
+		opts.GlobalCheckers = checkers
+		return opts
+	}
+}
+
 type RunOptions struct {
+	CaseArgs        json.RawMessage
 	GlobalCheckMode GlobalCheckMode
 	GlobalCheckers  []GlobalChecker
 }
@@ -113,14 +137,20 @@ const (
 	StageTeardown = "TEARDOWN"
 )
 
-func Run(mc MyCase, rc ResultStore, opts ...RunOptions) error {
+func Run(mc MyCase, rc ResultStore, opts ...RunOption) error {
 	info := mc.NewTask()
 	errs := &RunErrors{Info: info, Stage: StageSetup}
 	if err := rc.Setup(info); err != nil {
 		errs.ExecErr = err
 		return errs
 	}
-	if err := mc.Setup(); err != nil {
+
+	o := RunOptions{GlobalCheckMode: GlobalCheckIfUnchecked}
+	for _, f := range opts {
+		o = f(o)
+	}
+
+	if err := mc.Setup(o.CaseArgs); err != nil {
 		errs.ExecErr = err
 		return errs
 	}
@@ -164,17 +194,17 @@ func Run(mc MyCase, rc ResultStore, opts ...RunOptions) error {
 		checked[key] = checkKey(checker, key)
 	}
 
-	if errs.NoError() && len(opts) > 0 && opts[0].GlobalCheckMode != GlobalCheckNone && len(opts[0].GlobalCheckers) > 0 {
+	if errs.NoError() && len(opts) > 0 && o.GlobalCheckMode != GlobalCheckNone && len(o.GlobalCheckers) > 0 {
 		keys, err := rc.Keys()
 		if err != nil {
 			errs.StoreErrs = append(errs.StoreErrs, err)
 			return errs
 		}
 		for _, key := range keys {
-			if checked[key] && opts[0].GlobalCheckMode != GlobalCheckAlways {
+			if checked[key] && o.GlobalCheckMode != GlobalCheckAlways {
 				continue
 			}
-			for _, gc := range opts[0].GlobalCheckers {
+			for _, gc := range o.GlobalCheckers {
 				if gc.Available(key) {
 					checked[key] = checkKey(gc.Checker(), key)
 					break

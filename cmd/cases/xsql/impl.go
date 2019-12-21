@@ -8,6 +8,7 @@ import (
 	"path"
 	"time"
 
+	"github.com/go-logr/logr"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -15,8 +16,9 @@ import (
 	"github.com/zyguan/mytest/mystmt"
 	"github.com/zyguan/mytest/resultset"
 	"github.com/zyguan/zapglog/log"
-	"go.uber.org/zap"
 )
+
+var logger = log.NewLogrLogger("cases", "xsql")
 
 type Assertion struct {
 	Name    string   `json:"name"`
@@ -48,7 +50,7 @@ type XSQLCase struct {
 	home     string
 	checkers map[string]resultset.Checker
 	current  *mycase.TaskInfo
-	log      *zap.Logger
+	log      logr.Logger
 }
 
 func (x *XSQLCase) NewTask() mycase.TaskInfo {
@@ -58,20 +60,35 @@ func (x *XSQLCase) NewTask() mycase.TaskInfo {
 		Name: x.Name,
 		Meta: x.Meta,
 	}
-	x.log = log.L().With(zap.String("id", x.current.ID), zap.String("name", x.current.Name))
+	x.log = logger.WithName(x.Name).WithValues("id", x.current.ID)
 	return *x.current
 }
 
 func (x *XSQLCase) Checkers() map[string]resultset.Checker { return x.checkers }
 
-func (x *XSQLCase) Setup() error {
+func (x *XSQLCase) Setup(args json.RawMessage) error {
 	if x.current == nil {
-		x.log.Error("task has not been initialized")
-		return errors.New("task has not been initialized")
+		err := errors.New("task is uninitialized")
+		x.log.Error(err, "check task info")
+		return err
 	}
 	if len(x.DSNs) == 0 {
 		x.log.Info("no dsn provided")
 		return nil
+	}
+	if args != nil {
+		var spec struct {
+			File string `json:"file"`
+		}
+
+		if err := json.Unmarshal(args, &spec); err != nil {
+			x.log.Error(err, "parse case spec")
+			return err
+		}
+		if err := x.loadFromFile(spec.File); err != nil {
+			x.log.Error(err, "load case spec", "file", spec.File)
+			return err
+		}
 	}
 
 	done := make(chan struct{})
@@ -80,7 +97,7 @@ func (x *XSQLCase) Setup() error {
 	tasks := make([]sqlTask, len(x.DSNs))
 	for i, dsn := range x.DSNs {
 		tasks[i].dsn = dsn
-		tasks[i].log = x.log.With(zap.String("dsn", dsn))
+		tasks[i].log = x.log.WithValues("dsn", dsn)
 		tasks[i].stmtCh = make(chan mystmt.Stmt, 64)
 		go func(t *sqlTask) {
 			errs <- t.Run()
@@ -102,7 +119,7 @@ func (x *XSQLCase) Setup() error {
 			f := path.Join(x.home, p)
 			it, err = mystmt.SplitFile(f)
 			if err != nil {
-				x.log.Error("load setup file", zap.String("file", f), zap.Error(err))
+				x.log.Error(err, "load and split setup file", "file", f)
 				return
 			}
 			for it.Scan() {
@@ -130,8 +147,9 @@ func (x *XSQLCase) Setup() error {
 
 func (x *XSQLCase) Test(rc mycase.ResultStore) error {
 	if x.current == nil {
-		x.log.Error("task has not been initialized")
-		return errors.New("task has not been initialized")
+		err := errors.New("task is uninitialized")
+		x.log.Error(err, "check task info")
+		return err
 	}
 	if len(x.DSNs) == 0 {
 		x.log.Info("no dsn provided")
@@ -144,7 +162,7 @@ func (x *XSQLCase) Test(rc mycase.ResultStore) error {
 	tasks := make([]sqlTask, len(x.DSNs))
 	for i, dsn := range x.DSNs {
 		tasks[i].dsn = dsn
-		tasks[i].log = x.log.With(zap.String("dsn", dsn))
+		tasks[i].log = x.log.WithValues("dsn", dsn)
 		tasks[i].stmtCh = make(chan mystmt.Stmt, 64)
 		tasks[i].rc = rc
 		tasks[i].availCMDs = []string{cmdQuery, cmdExecute}
@@ -168,7 +186,7 @@ func (x *XSQLCase) Test(rc mycase.ResultStore) error {
 			f := path.Join(x.home, p)
 			it, err = mystmt.SplitFile(f)
 			if err != nil {
-				x.log.Error("load test file", zap.String("file", f), zap.Error(err))
+				x.log.Error(err, "load and split test file", "file", f)
 				return
 			}
 			for it.Scan() {
@@ -206,7 +224,7 @@ func (x *XSQLCase) Teardown() error {
 	tasks := make([]sqlTask, len(x.DSNs))
 	for i, dsn := range x.DSNs {
 		tasks[i].dsn = dsn
-		tasks[i].log = x.log.With(zap.String("dsn", dsn))
+		tasks[i].log = x.log.WithValues("dsn", dsn)
 		tasks[i].stmtCh = make(chan mystmt.Stmt, 64)
 		go func(t *sqlTask) {
 			errs <- t.Run()
@@ -228,7 +246,7 @@ func (x *XSQLCase) Teardown() error {
 			f := path.Join(x.home, p)
 			it, err = mystmt.SplitFile(f)
 			if err != nil {
-				x.log.Error("load teardown file", zap.String("file", f), zap.Error(err))
+				x.log.Error(err, "load and split teardown file", "file", f)
 				return
 			}
 			for it.Scan() {
@@ -254,22 +272,30 @@ func (x *XSQLCase) Teardown() error {
 	return fstErr
 }
 
+func (x *XSQLCase) loadFromFile(file string) error {
+	f, err := os.Open(file)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if err = json.NewDecoder(f).Decode(x); err != nil {
+		return errors.Trace(err)
+	}
+	if err = validateAndSetDefault(x); err != nil {
+		return err
+	}
+	return nil
+}
+
 const (
 	AssertionRawBytes = "RawBytes"
 	AssertionFloat    = "Float"
 )
 
 func Load(file string) (*XSQLCase, error) {
-	f, err := os.Open(file)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	x := &XSQLCase{home: path.Dir(file)}
-
-	if err = json.NewDecoder(f).Decode(x); err != nil {
-		return nil, errors.Trace(err)
-	}
-	if err = validateAndSetDefault(x); err != nil {
+	err := x.loadFromFile(file)
+	if err != nil {
 		return nil, err
 	}
 	return x, nil
@@ -346,7 +372,7 @@ type sqlTask struct {
 	availCMDs []string
 	stmtCh    chan mystmt.Stmt
 	rc        mycase.ResultStore
-	log       *zap.Logger
+	log       logr.Logger
 }
 
 func (t *sqlTask) Run() error {
@@ -405,7 +431,7 @@ func (t *sqlTask) Run() error {
 				ResultSet: rs,
 			})
 			if w != nil {
-				t.log.Warn("write execute result", zap.Error(err))
+				t.log.Info("write execute result", "err", w.Error())
 			}
 		case cmdQuery:
 			rows, err = conn.QueryContext(ctx, stmt.Text)
@@ -431,13 +457,13 @@ func (t *sqlTask) Run() error {
 				ResultSet: rs,
 			})
 			if w != nil {
-				t.log.Warn("write query result", zap.Error(err))
+				t.log.Info("write query result", "err", w.Error())
 			}
 		default:
 			_, err = conn.ExecContext(ctx, stmt.Text)
 		}
 		if err != nil && !ignoreErr {
-			t.log.Warn("unexpected error", zap.String("sql", stmt.Text), zap.Error(err))
+			t.log.Info("unexpected error", "sql", stmt.Text, "err", err.Error())
 			return err
 		}
 	}
