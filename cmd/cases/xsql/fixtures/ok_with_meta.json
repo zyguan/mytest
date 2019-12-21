@@ -1,0 +1,5 @@
+{
+  "name": "foo",
+  "meta": {"tags": ["a", "bb"]},
+  "stages": {"test": ["bar"]}
+}

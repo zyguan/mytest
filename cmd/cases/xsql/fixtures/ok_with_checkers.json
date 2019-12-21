@@ -1,0 +1,17 @@
+{
+  "name": "foo",
+  "stages": {
+    "setup": [],
+    "test": ["bar"]
+  },
+  "checkers": {
+    "k1": null,
+    "k2": {},
+    "k3": {"check_schema": false, "check_precision": true, "fail_fast": false},
+    "k4": {"assertions": []},
+    "k5": {"assertions": [{"name": "RawBytes"}]},
+    "k6": {"assertions": [{"name": "Float"}]},
+    "k7": {"assertions": [{"name": "Float", "delta": 3.14, "columns": []}]},
+    "k8": {"assertions": [{"name": "Float", "columns": [0, 1, 3]}]}
+  }
+}
